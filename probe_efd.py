@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "curl_cffi>=0.7",
+# ]
+# ///
 """
 efd edge-reputation probe
 ==========================
