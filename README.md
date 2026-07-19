@@ -15,3 +15,5 @@ The data presented here was sourced from these official sources:
 Other sources may be added in the future.
 
 While this data is public, it is subject to some [limitations on usage](https://efdsearch.senate.gov/search/home/), and as far as I can tell, those still apply. The code in this repo is mine, and is under [MIT License](LICENSE.md). 
+
+Full disclosure: Claude Code was used in the creation of much of this tooling.
