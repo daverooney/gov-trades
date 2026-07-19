@@ -1,0 +1,31 @@
+# .github/workflows/probe.yml
+# Runs the eFD edge-reputation probe on a GitHub-hosted runner.
+# This tells you whether the runner's datacenter IP can clear Akamai.
+
+name: efd-edge-probe
+
+on:
+  workflow_dispatch:        # <- lets you trigger it by hand from the Actions tab
+  schedule:
+    - cron: "0 12 * * 1"    # optional: every Monday 12:00 UTC, to catch edge drift
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the one dependency
+        run: pip install "curl_cffi>=0.7"
+
+      - name: Run the edge probe
+        run: python probe_efd.py
+        # If probe_efd.py exits non-zero the step fails and the run goes red,
+        # so the Actions tab becomes a pass/fail dashboard for "can we scrape
+        # from here". No secrets needed -- this probe touches only public URLs.
