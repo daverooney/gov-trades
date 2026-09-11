@@ -25,7 +25,7 @@ jobs:
         run: pip install "curl_cffi>=0.7"
 
       - name: Run the edge probe
-        run: python probe_efd.py
+        run: python ./scripts/probe_efd.py
         # If probe_efd.py exits non-zero the step fails and the run goes red,
         # so the Actions tab becomes a pass/fail dashboard for "can we scrape
         # from here". No secrets needed -- this probe touches only public URLs.
