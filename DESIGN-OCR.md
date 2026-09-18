@@ -14,11 +14,12 @@ when GitHub retired that product on 2026-07-30.
 
 | Role | Backend | Cost | Why |
 |---|---|---|---|
-| Primary scanner, e-filed docs | Gemma 4 26B A4B via Gemini API | free tier | Clean renders; small quality gap; spreads load |
-| Primary scanner, scanned docs | Gemma 4 31B via Gemini API | free tier | Best free document-understanding scores; the hard 30% |
-| Adjudicator | the *other* Gemma 4 model | free tier | Disagreement signal without a paid model |
+| Primary scanner, e-filed docs | Gemma 4 26B A4B via Gemini API, PDF in, schema out | free tier | Fixed 258 tokens/page is enough for clean renders; ~14K docs/day |
+| Primary scanner, scanned docs | Gemini 3.7 Flash via Gemini API (free tier, else paid Batch) | free / ~$0.375 per 1M in | Reads images at 1,102 tokens; hosted Gemma cannot exceed 258 |
+| Adjudicator, e-filed | Gemma 4 31B via Gemini API | free tier | Second free model, separate pool (unconfirmed) |
+| Adjudicator, scanned | Self-hosted Gemma 4 31B at 1120 on Colab, or Gemini 3.1 Pro | Pro units / per token | The pilot's verifier-grade recipe; Pro only on escalation |
 | Overflow / insurance | Self-hosted Gemma 4 on Colab Pro via Colab CLI | Pro compute units | Full control of image-token budget; survives free-tier changes |
-| Paid fallback | Vertex AI managed Gemma 4 26B A4B (MaaS) | per token | Same model, paid SLA; guards against free tier disappearing |
+| Paid fallback, e-filed | Vertex AI managed Gemma 4 26B A4B (MaaS) | per token | Same model, paid SLA |
 | Manual review | human, via a flagged queue in the manifest | time | Two-model disagreement or schema failure |
 
 The output **schema** is fixed across every backend. The **prompt** is not: each
@@ -42,9 +43,9 @@ backend gets its own prompt file, tuned to what that model responds to.
   | Input tokens / minute | ~15–16K | ~15–16K |
   | Requests / day | ~14K | ~14K |
 
-  Tokens-per-minute is the binding constraint, not requests. At a 1120 visual
-  token budget a one-page filing is ~1.5–2K input tokens, so ~8–10 single-page
-  docs/min per model, ~20M input tokens/day per model.
+  The probe below showed hosted Gemma reads at a fixed 258 tokens/page, so a
+  one-page filing is ~300 input tokens and RPM, not TPM, is the binding cap:
+  ~30 docs/min and ~14K docs/day per model.
 - **The two models appear to have separate pools.** This is an interpretation
   of the AI Studio UI (a per-model limit chart), not documented. **Test it in
   the first real run** by driving both models concurrently and watching for
@@ -52,8 +53,10 @@ backend gets its own prompt file, tuned to what that model responds to.
 - **Model choice.** Gemma 4 model card: 31B dense (30.7B params) vs 26B A4B MoE
   (25.2B total, 3.8B active). OmniDocBench 1.5: 0.131 vs 0.149 (lower is
   better). Both accept image input with the same visual token budget ladder
-  (70/140/280/560/1120). On the API both are free, so the 31B takes the hard
-  documents; the 26B is the Vertex-managed model, so it is the upgrade path.
+  (70/140/280/560/1120) when self-hosted; the API pins both at ~258. On the
+  API both are free and equally resolution-limited, so they split the e-filed
+  tier (26B first, 31B adjudicates); the 26B is the Vertex-managed model, so
+  it is the upgrade path. The 31B's 1120-budget advantage only exists on Colab.
 - **Two-model adjudication** mirrors the House pilot pattern (12B first pass,
   31B verifier, Claude Sonnet tie-break) but with no paid tier in the loop.
 - **Colab is overflow, not primary.** Colab CLI (launched 2026-06-05) provisions
@@ -63,17 +66,43 @@ backend gets its own prompt file, tuned to what that model responds to.
   and not planned. The MoE decodes faster than the 31B at the same VRAM, so it
   burns fewer units per page there.
 
+### Probe results, 2026-09-18 (`scripts/probe_gemma_api.py`)
+
+One e-filed House PTR sent to each model as PNG and as PDF, with and without
+a response schema and `media_resolution=high`. All twelve calls succeeded.
+
+| Model | PNG tokens | PDF tokens | Schema output | `media_resolution` effect | Latency |
+|---|---|---|---|---|---|
+| gemma-4-26b-a4b-it | 258 (IMAGE) | 258 (DOCUMENT) | yes, clean JSON | none | 2–19 s |
+| gemma-4-31b-it | 258 | 258 | yes | none | 3–16 s |
+| gemini-3.7-flash | 1,102 | 520 | yes | none observed | 2–3 s |
+
+Consequences:
+- **Gemma on the API accepts PDFs and honours `response_schema`.** Both were
+  undocumented. Send e-filed docs as PDF; schema output is also much faster
+  than free-text (no fence, no preamble).
+- **Hosted Gemma reads every image at a fixed 258 tokens**, roughly the 280
+  tier of the visual-budget ladder, and the setting cannot be raised. The
+  House pilot needed 1120 on scans and saw a P/S flip at 560. **Hosted Gemma
+  is therefore not the scan-tier model.** Gemini Flash reads at 1,102 natively.
+- Token math changes: at ~300 input tokens per e-filed page the TPM cap no
+  longer binds; RPM (~30) does, giving ~14K docs/day/model.
+- Gemma latency is 5–8× Flash. The Gemma path needs concurrency to reach RPM.
+- **To test:** tiling a scanned page into 2–4 crops gives hosted Gemma 258
+  tokens per crop. If that recovers scan accuracy on the golden set, the
+  scan tier can also be free Gemma.
+
 ---
 
 ## 3. Routing rule
 
 ```
 classify(doc)  ->  scanned | efiled
-    scanned  ->  31B first
-    efiled   ->  26B first
+    scanned  ->  Gemini 3.7 Flash first (1,102 tokens/page)
+    efiled   ->  Gemma 4 26B first, as PDF, with response_schema
 result  ->  validate(schema) and sanity(row count vs header, dates plausible)
     pass     ->  accept, record model + prompt version in manifest
-    fail     ->  send to the other model
+    fail     ->  send to the adjudicator for that class
         agree (within tolerance)  ->  accept the second result, note escalation
         disagree / fail again     ->  flag for manual review, keep both outputs
 ```
@@ -94,9 +123,10 @@ class Extractor(Protocol):
 
 `ExtractionResult` is the fixed schema (§5). Backends:
 
-- `gemini.py` — `google-genai` SDK, API key from env. Handles 429 with backoff
-  and a token-bucket that respects the observed TPM. One request per document
-  (all pages), matching the House pilot.
+- `gemini.py` — `google-genai` SDK, API key from env; serves both Gemma and
+  Gemini models by model id. `response_schema` on every call. E-filed docs go
+  as PDF (one request per document); scans go as page images. Handles 429
+  with backoff and a rate limiter per model id.
 - `colab.py` — OpenAI-compatible client against a `llama-server` or vLLM on a
   Colab runtime, base URL from env. Serving recipe from the House pilot:
   `--image-min-tokens 1120 --image-max-tokens 1120`, greedy, thinking off.
@@ -147,10 +177,11 @@ Before choosing routing thresholds or trusting any throughput figure:
 ## 7. Things to verify in the first real run
 
 1. **Separate vs shared rate-limit pools** across the two Gemma models.
-2. **How the Gemini API counts image tokens for Gemma 4** — at the requested
-   visual budget, a fixed per-image figure, or otherwise. The throughput math
-   assumes the budget. Whether the budget is even settable through the API is
-   itself unconfirmed.
+2. ~~How the Gemini API counts image tokens for Gemma 4~~ **Resolved:** fixed
+   258 per image or PDF page, not settable. See probe results above.
+2b. **Gemini 3.7 Flash free-tier limits** (AI Studio rate-limit chart) — decides
+   whether the scan tier is free or paid Batch.
+2c. **Tiled-crop trick** on hosted Gemma for scans, measured on the golden set.
 3. **Exact rate-limit values** from the AI Studio tooltip.
 4. **Free-tier data-use terms.** Prompts on the free tier may be used for
    product improvement. The inputs are public records, so this is tolerable,
@@ -165,7 +196,8 @@ Before choosing routing thresholds or trusting any throughput figure:
 
 | Corpus | Docs | On the free tier |
 |---|---|---|
-| House PTRs, 2013–present | ~8,400 | 1–2 days at ~2K tokens/doc, one model |
+| House PTRs, e-filed (~70%) | ~5,900 | under one day on Gemma at ~14K RPD |
+| House PTRs, scanned (~30%) | ~2,500 | Flash: free-tier limits TBD; paid Batch ≈ $1–2 total at 1,102 tokens/page |
 | House annual reports | unsized | multi-page; unknown |
 | Senate, 2012–present | unsized | scanned share unknown |
 
