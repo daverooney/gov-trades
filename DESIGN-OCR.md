@@ -91,10 +91,15 @@ Consequences:
   is therefore not the scan-tier model.** Gemini Flash reads at 1,102 natively.
 - Token math changes: at ~300 input tokens per e-filed page the TPM cap no
   longer binds; RPM (~30) does, giving ~14K docs/day/model.
-- Gemma latency was 10–19 s on free-text calls and 2–3 s with `response_schema`,
-  for similar output lengths; Flash was 2–3 s throughout. Hypothesis: Gemma
-  thinks by default on free-text calls. **Set `thinking_level` explicitly and
-  re-measure.** Either way the Gemma path needs concurrency to reach 30 RPM.
+- **Gemma latency explained** (second probe run, with `thoughts_token_count`):
+  Gemma thinks by default on free-text calls (263–901 thought tokens) and not
+  at all under `response_schema` (none; 2–3 s). Decode rates from the token
+  counts: 26B A4B ~45 tok/s, 31B ~33 tok/s, Gemini Flash ~230 tok/s. The MoE
+  is faster per token as expected; it only looked slower because it thought
+  more. Flash still thinks under schema mode (~180 tokens) but is fast enough
+  not to care. **Production setting: schema mode plus an explicit
+  `thinking_level`, not the undocumented side effect.** This matches the House
+  pilot, which validated extraction with thinking off.
 - **To test:** tiling a scanned page into 2–4 crops gives hosted Gemma 258
   tokens per crop. If that recovers scan accuracy on the golden set, the
   scan tier can also be free Gemma.
@@ -189,7 +194,8 @@ Before choosing routing thresholds or trusting any throughput figure:
    258 per image or PDF page, not settable. See probe results above.
 2b. ~~Gemini 3.7 Flash free-tier limits~~ **Resolved:** Tier 1 applies (1K RPM,
    2M TPM, 10K RPD); scan tier is paid at ~$3 for the PTR corpus.
-2d. **Gemma latency vs `thinking_level`** — measure with thinking off.
+2d. ~~Gemma latency vs `thinking_level`~~ **Resolved:** default thinking; off
+   under schema mode. Set it explicitly.
 2c. **Tiled-crop trick** on hosted Gemma for scans, measured on the golden set.
 3. ~~Exact rate-limit values~~ **Resolved:** see table in §2.
 4. **Free-tier data-use terms.** Prompts on the free tier may be used for

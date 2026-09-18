@@ -19,6 +19,11 @@ Answers, empirically, what the docs do not say about Gemma 4 on the Gemini API:
 Runs each check against both Gemma 4 models and, for comparison, one Gemini
 Flash model. Prints a table. Exit 0 always; the table is the answer.
 
+`--latency` runs a different matrix instead: the same PNG call with
+thinking unset / minimal / high, with and without response_schema, twice
+each, and reports thoughts_token_count next to wall time. This tests the
+hypothesis that Gemma thinks by default on free-text calls.
+
 Needs GEMINI_API_KEY in the environment. Uses one real e-filed House PTR
 (public, open access) as the test document. Each call is a single request,
 so the whole probe costs ~10 requests against the free tier.
@@ -93,15 +98,42 @@ def call(client, model, part, config=None):
         if um is not None:
             mods = getattr(um, "prompt_tokens_details", None) or []
             detail = ", ".join(f"{m.modality}={m.token_count}" for m in mods)
+        thoughts = getattr(um, "thoughts_token_count", None)
         text = (r.text or "").strip()
         looks_json = text.startswith("{") or text.startswith("[")
         return ("OK", f"{time.time()-t0:.1f}s in={um.prompt_token_count} "
-                      f"out={um.candidates_token_count} [{detail}] "
-                      f"json={'yes' if looks_json else 'no'} "
+                      f"out={um.candidates_token_count} thoughts={thoughts} "
+                      f"[{detail}] json={'yes' if looks_json else 'no'} "
                       f"head={text[:60]!r}")
     except Exception as e:  # noqa: BLE001
         msg = " ".join(str(e).split())[:160]
         return ("FAIL", f"{time.time()-t0:.1f}s {msg}")
+
+
+def latency_matrix(client, png_part):
+    """Same call, varying only thinking_level and response_schema."""
+    variants = []
+    for think in (None, "minimal", "high"):
+        for schema in (False, True):
+            kw = {}
+            if think is not None:
+                kw["thinking_config"] = types.ThinkingConfig(thinking_level=think)
+            if schema:
+                kw["response_mime_type"] = "application/json"
+                kw["response_schema"] = SCHEMA
+            label = f"think={think or 'unset':7s} schema={'y' if schema else 'n'}"
+            variants.append((label, types.GenerateContentConfig(**kw) if kw else None))
+
+    rows = []
+    for model in [m for m in MODELS if m.startswith("gemma")]:
+        for label, cfg in variants:
+            for rep in (1, 2):
+                print(f">> {model:22s} {label} rep{rep}")
+                status, detail = call(client, model, png_part, cfg)
+                print(f"   {status}: {detail}")
+                rows.append((model, f"{label} rep{rep}", status, detail))
+                time.sleep(2)
+    return rows
 
 
 def main():
@@ -120,6 +152,14 @@ def main():
 
     pdf_part = types.Part.from_bytes(data=pdf, mime_type="application/pdf")
     png_part = types.Part.from_bytes(data=png, mime_type="image/png")
+
+    if "--latency" in sys.argv:
+        rows = latency_matrix(client, png_part)
+        print("\n== LATENCY SUMMARY ==")
+        w = max(len(r[1]) for r in rows)
+        for model, label, status, detail in rows:
+            print(f"{model:22s} {label:{w}s} {status:4s} {detail[:70]}")
+        return 0
 
     checks = [
         ("png, plain", png_part, None),
