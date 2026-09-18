@@ -119,7 +119,7 @@ result  ->  validate(schema) and sanity(row count vs header, dates plausible)
         disagree / fail again     ->  flag for manual review, keep both outputs
 ```
 
-Tolerance and "agree" are defined on the calibration set (§6), not guessed.
+Tolerance and "agree" are defined on the golden set (§6), not guessed.
 Every accepted row records which model and prompt version produced it, so the
 dataset is auditable and re-runnable per backend.
 
@@ -133,7 +133,7 @@ class Extractor(Protocol):
     def extract(self, pages: list[bytes], doc_class: str, prompt: str) -> ExtractionResult: ...
 ```
 
-`ExtractionResult` is the fixed schema (§5). Backends:
+`ExtractionResult` is the model-facing schema (§5). Backends:
 
 - `gemini.py` — `google-genai` SDK, API key from env; serves both Gemma and
   Gemini models by model id. `response_schema` on every call. E-filed docs go
@@ -150,37 +150,134 @@ records the prompt version per row.
 
 ---
 
-## 5. Output schema (fixed)
+## 5. Data model (fixed)
 
-Per document:
+Absorbed from the competing brief (`prior_art/PROJECT_BRIEF.md` §4). Three
+tables, never collapsed into one; the wide shape people want is a view.
+
+```sql
+-- One row per source document (the manifest, formalised)
+CREATE TABLE filings (
+  filing_id        TEXT PRIMARY KEY,   -- '<chamber>-<source doc id>'
+  chamber          TEXT NOT NULL,      -- 'house' | 'senate'
+  filer_name       TEXT,
+  filer_id         TEXT,               -- source-system id if any
+  report_type      TEXT,               -- 'PTR' | 'annual' | 'amendment' | ...
+  amends_filing_id TEXT,               -- FK filings.filing_id; never overwrite
+  filing_date      TEXT,               -- ISO 8601
+  source_url       TEXT,
+  raw_key          TEXT,               -- R2 object key for the raw file(s)
+  content_sha256   TEXT,
+  page_count       INTEGER,
+  doc_class        TEXT,               -- 'efiled' | 'scanned'; drives routing
+  first_seen_at    TEXT NOT NULL,
+  review_flag      INTEGER NOT NULL DEFAULT 0,
+  review_reason    TEXT
+);
+
+-- One row per (filing, page-or-whole, model run). Every run is kept.
+CREATE TABLE extractions (
+  extraction_id     TEXT PRIMARY KEY,
+  filing_id         TEXT NOT NULL REFERENCES filings(filing_id),
+  page_number       INTEGER,           -- NULL when the whole PDF was sent
+  model_id          TEXT NOT NULL,     -- 'gemma-4-26b-a4b-it', ...
+  backend           TEXT NOT NULL,     -- 'gemini' | 'colab' | 'vertex'
+  thinking_level    TEXT,
+  prompt_version    TEXT NOT NULL,     -- prompts/<backend>/<class>-vN.md
+  schema_version    TEXT NOT NULL,     -- schemas/extraction-vN.json
+  run_at            TEXT NOT NULL,
+  input_tokens      INTEGER,
+  output_tokens     INTEGER,
+  thought_tokens    INTEGER,
+  raw_response      TEXT NOT NULL,     -- verbatim model JSON
+  validation_status TEXT,              -- 'ok' | 'warn' | 'fail'
+  is_current        INTEGER NOT NULL DEFAULT 0
+);
+
+-- One row per extracted transaction line
+CREATE TABLE transactions (
+  extraction_id        TEXT NOT NULL REFERENCES extractions(extraction_id),
+  row_index            INTEGER NOT NULL,
+  owner                TEXT,           -- normalised
+  owner_raw            TEXT,
+  asset_name           TEXT,
+  asset_type           TEXT,           -- from the [XX] code (House)
+  ticker               TEXT,           -- after clean_house_ticker etc.
+  ticker_raw           TEXT,
+  transaction_type     TEXT,           -- 'purchase' | 'sale' | 'sale_partial' | 'exchange'
+  transaction_type_raw TEXT,
+  transaction_date     TEXT,
+  transaction_date_raw TEXT,
+  notification_date    TEXT,
+  amount_low           INTEGER,
+  amount_high          INTEGER,
+  amount_raw           TEXT,
+  comment              TEXT,
+  extra                TEXT,           -- JSON: anything the schema didn't anticipate
+  PRIMARY KEY (extraction_id, row_index)
+);
+
+CREATE VIEW transactions_current AS
+SELECT f.*, e.model_id, e.prompt_version, e.run_at, t.*
+FROM transactions t
+JOIN extractions e ON e.extraction_id = t.extraction_id
+JOIN filings f     ON f.filing_id = e.filing_id
+WHERE e.is_current = 1;
+```
+
+Principles:
+- **Keep `raw_response`.** New fields are backfilled from stored responses,
+  not by re-running the model.
+- **Never overwrite a run.** A better model or prompt gets a new
+  `extraction_id`; `is_current` picks the winner. "Did the new prompt help?"
+  is then a query.
+- **Normalise and preserve.** Every cleaned field has a `_raw` sibling.
+  Normalisation (owner/type/amount/ticker cleaning, date plausibility) is an
+  ingest step over `raw_response`; the extractor stays faithful to the page.
+- **`extra` is an escape hatch, not a dumping ground.** A field that shows up
+  there consistently gets promoted to a column and noted in
+  `CHANGELOG-SCHEMA.md`.
+- **Amendments link, never replace.** `amends_filing_id` points at the
+  original; both stay.
+
+### Model-facing schema
+
+`schemas/extraction-vN.json` is the `response_schema` sent to the model: a
+superset of the `transactions` columns' raw forms plus a per-row `extra`
+object, a page-level `notes` string, and `n_transactions_header`. Versioned
+in lockstep with the prompt; `extractions.schema_version` records it.
+
+### On-disk form (the committed text)
 
 ```
-doc_id, chamber, filer, doc_class (scanned|efiled), n_pages,
-model, prompt_version, extracted_at,
-n_transactions_header, transactions: [
-  { owner, asset_name, ticker, transaction_type, transaction_date,
-    notification_date, amount_range, description, page }
-],
-legibility, escalated (bool), review_flag (bool), review_reason
+data/
+├── filings.csv                                   # one row per filing, sorted by filing_id
+├── extractions/{chamber}/{year}/{filing_id}.jsonl  # one line per run, raw_response inline
+└── transactions/{chamber}/{year}/{filing_id}.jsonl # one line per row, sorted (extraction_id,row_index)
 ```
 
-This is the House pilot's direct-to-JSON shape, generalised. Verbatim
-transcription (the original Senate plan) is dropped as the primary product;
-if wanted it is a second prompt against the same pages, not a prerequisite.
-Normalisation (owner/type/amount/ticker cleaning, date plausibility) happens
-downstream in ingest, not here: the extractor stays faithful to the page.
+Diff-friendliness rules: one file per filing, never per batch; deterministic
+sort order and fixed key order on every JSON line; fixed CSV column order,
+new columns appended. A re-run should change only the lines it changed.
+SQLite/DuckDB/Parquet are built from these files at release time and never
+committed. If `extractions/` outgrows the repo, it moves to gzipped per-year
+Release assets or R2, not LFS.
 
 ---
 
-## 6. Calibration set
+## 6. Golden set
 
 Before choosing routing thresholds or trusting any throughput figure:
 
-- ~20 hand-checked documents per chamber spanning e-filed single-page,
-  e-filed multi-page, scanned checkbox form, scanned handwritten, and one
-  bond/muni-heavy filing (the ticker-phantom case).
+- **~200 hand-verified pages** across both chambers, all eras, and every form
+  type: e-filed single-page, e-filed multi-page, scanned checkbox form,
+  scanned handwritten, rotated/faxed, amendment, and bond/muni-heavy (the
+  ticker-phantom case). Kept under `tests/golden/`. Start with 20 per chamber
+  as a smoke test and grow to 200 before the backfill.
+- Every prompt, schema, or model change reports per-field precision/recall
+  on this set before adoption. It is the only defensible basis for §3.
 - Run every backend against it. Record per-document agreement, per-field
-  error, wall time, tokens, and 429s.
+  error, wall time, tokens, thought tokens, and 429s.
 - Publish the table in the README. It is the evidence behind the routing rule
   and the most useful thing a reader of this repo can see.
 

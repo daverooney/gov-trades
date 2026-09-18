@@ -22,3 +22,9 @@ moving here.
 Still in the paper repo and not copied: the Gemma extraction harness
 (`gemma_extract.py`, `jam_backfill.py`), the pilot JSON output, and the
 serving-recipe findings.
+
+## `PROJECT_BRIEF.md`
+
+A competing design from a separate deep dive, 2026-09-18. Its header lists
+which parts were absorbed into the live design docs and which were not, and
+why. Read the header; the body is kept verbatim for reference.

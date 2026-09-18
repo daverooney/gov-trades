@@ -97,31 +97,42 @@ See §6 for the reasoning.
 │   └── workflows/
 │       ├── probe.yml          ← standalone edge probe (already built)
 │       └── pipeline.yml       ← the main scheduled pipeline
+├── DATA-TERMS.md              ← statutory use restriction on the data
+├── CHANGELOG-SCHEMA.md        ← field promotions, schema versions
+├── schemas/
+│   └── extraction-v1.json     ← response_schema sent to the model
+├── prompts/
+│   └── <backend>/<class>-v1.md ← prompt per backend and doc class
 ├── src/
 │   ├── config.py              ← all tunables (scope, delays, model IDs)
 │   ├── session.py             ← curl_cffi session + eFD handshake
 │   ├── collect.py             ← Phase 1: listing + download
 │   ├── storage.py             ← R2 adapter (put/get/exists via S3 API)
-│   ├── manifest.py            ← read/write/checkpoint the manifest
+│   ├── filings.py             ← read/write/checkpoint data/filings.csv
 │   ├── extract/               ← Phase 2: backends per DESIGN-OCR.md
-│   └── compile.py             ← Phase 3: build CSV/SQLite/DuckDB
-├── data/                      ← COMMITTED derived artifacts (text only)
-│   ├── manifest.csv           ← index of every filing + status
-│   └── filings/               ← per-filing structured CSVs
+│   ├── validate.py            ← row/page checks; sets validation_status
+│   ├── ingest.py              ← normalise raw_response → transactions rows
+│   └── build_release.py       ← Phase 3: JSONL → SQLite/DuckDB/Parquet
+├── data/                      ← COMMITTED text, the source of truth
+│   ├── filings.csv            ← one row per filing (the manifest)
+│   ├── extractions/{chamber}/{year}/{filing_id}.jsonl
+│   └── transactions/{chamber}/{year}/{filing_id}.jsonl
 └── tests/
-    └── ...
+    └── golden/                ← ~200 hand-verified pages (DESIGN-OCR §6)
 
-  Compiled datasets are NOT in the repo. Each run publishes them as
-  Release assets on the `latest` release (or to R2):
+  Compiled datasets are NOT in the repo. Each release publishes them as
+  Release assets (or to R2):
       senate_disclosures.duckdb
       senate_disclosures.sqlite
-      senate_disclosures_full.csv
+      *.parquet (one per table)
+      RELEASE_NOTES.md (row counts, coverage, model/prompt versions, pointer to DATA-TERMS.md)
 ```
 
 **What lives where, and why:**
 - **Raw scans/HTML → R2, never git.** Binaries bloat git history permanently.
-- **Small text derived data (manifest, per-filing CSVs) → repo.** Diffs well,
-  browsable on GitHub, cheap to clone. This is the product people read.
+- **Small text derived data (`filings.csv`, per-filing JSONL) → repo.** Diffs
+  well, browsable on GitHub, cheap to clone. This is the product people read.
+  Per-filing files, deterministic ordering, fixed key order (DESIGN-OCR §5).
 - **Large compiled datasets (`.duckdb`, `.sqlite`, full-history `.csv`) →
   GitHub Release assets (or R2), never committed.** They're big, binary, and
   regenerated wholesale each run — the worst possible shape for git history.
@@ -145,9 +156,10 @@ Ported from the existing Colab notebook, which already works. Key pieces:
   — download each page image in order. Rare direct PDFs handled too.
 - **Storage** (`storage.py`): instead of Google Drive, write each raw file to
   R2 under a stable key, e.g. `raw/<year>/<filer>_<date>_<reportid>/<page>.gif`.
-- **Manifest** (`manifest.py`): one row per filing with filer, date, report
-  type, format (electronic/scanned), R2 keys, and status columns. Checkpoint
-  after every filing so a mid-run disconnect costs at most one item.
+- **Filings index** (`filings.py`, the manifest): one row per filing per the
+  `filings` table in DESIGN-OCR §5, with `raw_key`, `content_sha256`,
+  `doc_class`, and `amends_filing_id` for amendments (link, never replace).
+  Checkpoint after every filing so a mid-run disconnect costs at most one item.
 
 **Incremental behavior:** on each run, list only filings newer than the last
 successful run (track a high-water mark — the max filing date seen — in the
@@ -169,7 +181,7 @@ The extraction tier is shared with the House pipeline and specified in
 (31B for scanned, 26B A4B for e-filed), the other model as adjudicator,
 self-hosted Gemma on Colab via the Colab CLI as overflow, Vertex managed
 Gemma as paid fallback. Fixed output schema, per-backend prompts, a
-calibration set before any threshold is chosen.
+golden set before any threshold is chosen.
 
 Senate-specific points only:
 
@@ -196,22 +208,29 @@ rather than by hand.
 
 ## 6. Phase 3 — Compile
 
-After collection + OCR, build the published artifacts from the manifest +
-per-filing data. The compile step is idempotent — a pure function of the
-collected/OCR'd inputs, rebuilt from scratch each run.
+After collection + extraction, build the published artifacts from the
+committed text under `data/`. The build is idempotent — a pure function of
+the JSONL files, rebuilt from scratch each release. Anyone with the repo can
+reproduce identical assets locally.
 
 Two output channels, chosen by how each artifact behaves in git:
 
 **Committed to the repo (text, diffs well, small):**
-- **`manifest.csv`** — always-current index of every filing and its status.
-- **Per-filing CSVs** under `data/filings/`.
-- Final step: `git commit` + `git push` using the run's token.
+- **`data/filings.csv`** — always-current index of every filing.
+- **Per-filing JSONL** under `data/extractions/` (every run, raw response
+  inline) and `data/transactions/` (normalised rows).
+- Commit messages carry the batch, model, and prompt version.
 
 **Published as Release assets, NOT committed (large, binary, regenerated whole):**
-- Compiled full-history **`.csv`**, **`.sqlite`**, and **`.duckdb`**.
-- Attached to a single rolling release (tag `latest`), replacing the prior
-  assets each run, e.g. via `gh release upload latest <file> --clobber`.
-- People download "the current dataset" from the release page / a stable URL.
+- **`.sqlite`**, **`.duckdb`**, and one **`.parquet`** per table, built by
+  loading the JSONL into the three-table schema and applying `is_current`.
+- Validation queries run first; the release fails if counts or invariants
+  regress against the previous release.
+- Attached to a rolling `latest` release (or a `vYYYY.Q` tag), with
+  `RELEASE_NOTES.md` pointing at `DATA-TERMS.md`, because people find assets
+  via search and never read the README.
+- DuckDB can query the Parquet straight from the release URL; say so in the
+  README.
 
 ### Why the split — the git-history trap
 Git keeps every version of every file forever. For **text** (the CSVs) it stores
@@ -320,8 +339,10 @@ so this is normally a local env var rather than a repo secret.
 
 1. **Backfill strategy.** One big sharded bootstrap vs. letting incremental runs
    slowly catch up. Affects whether the Colab overflow path is needed at all.
-2. **Manifest format at scale.** CSV is simple but a growing manifest may be
-   better as SQLite (also lets Phase 3 query it directly). Decide early.
+2. **Manifest format at scale.** Settled: text is the source of truth
+   (`filings.csv` + per-filing JSONL); SQLite is built from it at release time
+   and never committed. If `data/extractions/` outgrows the repo it moves to
+   per-year Release assets or R2, not LFS.
 3. **Transaction parsing depth.** Settled by `DESIGN-OCR.md` §5: direct-to-JSON
    transaction rows are the product; verbatim transcription is an optional
    second prompt, not a prerequisite.
@@ -344,12 +365,12 @@ so this is normally a local env var rather than a repo secret.
 
 1. `config.py` + `session.py` + the probe (session/handshake — already proven).
 2. `storage.py` (R2 adapter) with a tiny put/get/exists round-trip test.
-3. `manifest.py` (schema, read/write, checkpoint).
-4. `collect.py` (listing + download → R2 + manifest); run a tiny date-bounded
+3. `filings.py` (schema per DESIGN-OCR §5, read/write, checkpoint).
+4. `collect.py` (listing + download → R2 + filings.csv); run a tiny date-bounded
    slice end to end.
-5. `extract/gemini.py` behind the `Extractor` protocol; run the calibration set
+5. `extract/gemini.py` behind the `Extractor` protocol; run the golden set
    (DESIGN-OCR §6) before wiring routing.
-6. `compile.py` (build CSV/SQLite/DuckDB from per-filing data).
+6. `validate.py`, `ingest.py`, `build_release.py` (JSONL → SQLite/DuckDB/Parquet).
 7. `pipeline.yml` wiring the three jobs; test via `workflow_dispatch` on a
    narrow date range before enabling the schedule.
 8. Backfill: shard by year, run on the Gemini free tier from a laptop or a

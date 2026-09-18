@@ -25,8 +25,9 @@ prior House work in `prior_art/paper/`. Nothing built yet in this repo.
 - **Uniform vision path for e-filed and scanned.** The prior work showed
   pdfplumber parsing of e-filed PTRs is fragile (small-caps fonts serialise
   with mangled case, checkbox widgets become glyph runs, whole rows collapse
-  into one cell). Rendering every page and sending it to the model is the
-  simpler design; document class drives the routing tier, not the code path.
+  into one cell). Every document goes to a vision model; document class
+  drives which model and how the pages are sent (e-filed as the PDF itself,
+  scans as page images), not whether a parser is tried first.
 
 ---
 
@@ -58,10 +59,17 @@ FilingDate, DocID. No page counts, no format flag, no transaction data.
 - `download.py`: fetch the PDF by filing type + year + DocID; store under
   `raw/house/<year>/<filingtype>/<docid>.pdf`. Classify `scanned|efiled` on
   arrival (prefix, then `pdffonts` as the tiebreak) and record it.
-- `manifest`: adds `filing_type`, `docid_prefix_class`, `n_pages`, and the
-  shared `extract_status` / `model` / `prompt_version` / `review_flag` columns.
-- Rendering: `pdftoppm -png -r 150` to ephemeral local disk only; PNGs are
-  never stored. Scans are ~25 KB/page CCITT so rendering is cheap.
+- `filings.csv`: the shared `filings` table (DESIGN-OCR §5) plus House
+  columns `filing_type` and `docid_prefix_class`. `report_type` is derived
+  from `filing_type`.
+- **Amendments:** how the FD index and the PDFs mark an amended PTR is not
+  yet known (open question 6). Whatever the mechanism, an amendment gets its
+  own `filing_id` with `amends_filing_id` set; the original is never dropped
+  or overwritten.
+- Rendering: e-filed PDFs are sent to the model as-is (258 tokens/page on
+  Gemma, text layer preserved). Only scans are rendered, with
+  `pdftoppm -png -r 150`, to ephemeral local disk; PNGs are never stored.
+  Scans are ~25 KB/page CCITT so rendering is cheap.
 
 ---
 
@@ -84,9 +92,10 @@ Shared tier in `DESIGN-OCR.md`. House-only pieces, all lifted from
   Do not route on it; route on schema validity + sanity checks + two-model
   agreement.
 - **Scanned checkbox forms** are the known hard case (the 12B flattened partial
-  sales and emitted checkbox amounts as letters). They go to the 31B first
-  under the routing rule. The prior scan-path validation was n=1, so the
-  calibration set must over-sample scans.
+  sales and emitted checkbox amounts as letters). Under the routing rule they
+  go to Gemini Flash first (1,102 tokens/page), with self-hosted Gemma 31B at
+  1120 on Colab as adjudicator. The prior scan-path validation was n=1, so
+  the golden set must over-sample scans.
 
 ---
 
@@ -111,8 +120,9 @@ a signal for review, not a verdict against us.
 | PTR corpus | ~0.5 GB (extrapolated) | |
 | Annual reports | unsized | |
 
-On the Gemini free tier at ~2K tokens/doc, the PTR corpus is 1–2 days on one
-model. Verify with the calibration set and the first sharded run.
+E-filed PTRs (~5,900) on Gemma at ~300 tokens/doc and 14.4K RPD: under a
+day. Scanned PTRs (~2,500) on Gemini Flash Tier 1: a few hours, ~$3. Verify
+with the golden set and the first sharded run.
 
 ---
 
@@ -129,6 +139,9 @@ model. Verify with the calibration set and the first sharded run.
 5. **Statute coverage.** `DATA-TERMS.md` quotes the statute as applied to
    Senate reports; the same Title I applies to House reports. Confirm and
    say so explicitly there.
+6. **Amendment detection.** Not investigated. Find out whether the FD index
+   carries an amendment flag or type, whether the PDF is marked, and whether
+   a reliable link to the original filing can be derived.
 
 ---
 
@@ -138,8 +151,9 @@ model. Verify with the calibration set and the first sharded run.
    an empty manifest.
 2. `download.py` + classification; pull 20 docs spanning both classes into R2.
 3. Port `house_ingest.py` + tests; wire the date guard.
-4. Calibration set (DESIGN-OCR §6) using those 20 docs; run both Gemma models.
-5. Routing rule from the calibration numbers; `extract/gemini.py` end to end.
+4. Golden set (DESIGN-OCR §6) seeded with those 20 docs; run both Gemma models
+   and Gemini Flash.
+5. Routing rule from the golden-set numbers; `extract/gemini.py` end to end.
 6. Validation oracle report.
 7. Shard the PTR backfill by year; recent years first.
 8. Annual reports, once sized.
