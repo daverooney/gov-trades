@@ -18,7 +18,9 @@ Other sources may be added in the future.
 
 - `scripts/probe_efd.py` - go/no-go probe: can this host clear the Senate eFD edge? Run with `uv run scripts/probe_efd.py`.
 - `.github/workflows/probe.yml` - runs the probe weekly from a GitHub-hosted runner.
-- `DESIGN-SENATE.md` - pipeline design for the Senate side.
+- `DESIGN-SENATE.md` - pipeline design for the Senate side (the base design).
+- `DESIGN-HOUSE.md` - House pipeline as a delta from the Senate design.
+- `DESIGN-OCR.md` - the shared extraction tier: Gemma 4 on the Gemini API, Colab overflow, routing and calibration.
 - `prior_art/` - reference material carried over from the earlier House work. Not on the import path.
 
 ## License and data terms
