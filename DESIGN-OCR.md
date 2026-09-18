@@ -34,22 +34,26 @@ backend gets its own prompt file, tuned to what that model responds to.
   bare inference endpoint, and needs a personal PAT in a personal repo. Not a fit.
 - **Gemma 4 on the Gemini API is free with image input.** Both `gemma-4-31b-it`
   and `gemma-4-26b-a4b-it` are served; the pricing page lists both as free of
-  charge with no paid tier. Rate limits observed in AI Studio on 2026-09-18
-  (read off the chart; confirm exact values from the tooltip):
+  charge with no paid tier. Exact limits from the AI Studio rate-limit table,
+  2026-09-18. The project is on **Tier 1** (billing linked); the compare view
+  shows Gemma's limits are identical on the free tier.
 
-  | Limit (per model) | 26B A4B | 31B |
-  |---|---|---|
-  | Requests / minute | ~30 | ~30 |
-  | Input tokens / minute | ~15–16K | ~15–16K |
-  | Requests / day | ~14K | ~14K |
+  | Model | RPM | Input TPM | RPD |
+  |---|---|---|---|
+  | Gemma 4 31B | 30 | 16K | 14.4K |
+  | Gemma 4 26B A4B | 30 | 16K | 14.4K |
+  | Gemini 3.7 Flash (Tier 1) | 1,000 | 2M | 10K |
 
   The probe below showed hosted Gemma reads at a fixed 258 tokens/page, so a
   one-page filing is ~300 input tokens and RPM, not TPM, is the binding cap:
   ~30 docs/min and ~14K docs/day per model.
-- **The two models appear to have separate pools.** This is an interpretation
-  of the AI Studio UI (a per-model limit chart), not documented. **Test it in
-  the first real run** by driving both models concurrently and watching for
-  429s. If pools are shared, halve the throughput figures above.
+- **Per-model caps are confirmed**, not an interpretation: the rate-limit table
+  lists each model separately with its own usage counters, and the probe's
+  calls appeared on their own rows.
+- **Gemini Flash is on the free tier only nominally** (~5 RPM, ~250K TPM per
+  the compare deltas). On this project's Tier 1 it is paid: ~$0.75/M input
+  standard, ~$0.375/M Batch. The scanned PTR corpus (~2,500 docs × ~1.5K
+  tokens ≈ 4M tokens) is ~$3 standard, so Batch is optional, not required.
 - **Model choice.** Gemma 4 model card: 31B dense (30.7B params) vs 26B A4B MoE
   (25.2B total, 3.8B active). OmniDocBench 1.5: 0.131 vs 0.149 (lower is
   better). Both accept image input with the same visual token budget ladder
@@ -87,7 +91,10 @@ Consequences:
   is therefore not the scan-tier model.** Gemini Flash reads at 1,102 natively.
 - Token math changes: at ~300 input tokens per e-filed page the TPM cap no
   longer binds; RPM (~30) does, giving ~14K docs/day/model.
-- Gemma latency is 5–8× Flash. The Gemma path needs concurrency to reach RPM.
+- Gemma latency was 10–19 s on free-text calls and 2–3 s with `response_schema`,
+  for similar output lengths; Flash was 2–3 s throughout. Hypothesis: Gemma
+  thinks by default on free-text calls. **Set `thinking_level` explicitly and
+  re-measure.** Either way the Gemma path needs concurrency to reach 30 RPM.
 - **To test:** tiling a scanned page into 2–4 crops gives hosted Gemma 258
   tokens per crop. If that recovers scan accuracy on the golden set, the
   scan tier can also be free Gemma.
@@ -176,13 +183,15 @@ Before choosing routing thresholds or trusting any throughput figure:
 
 ## 7. Things to verify in the first real run
 
-1. **Separate vs shared rate-limit pools** across the two Gemma models.
+1. ~~Separate vs shared rate-limit pools~~ **Resolved:** separate, per the
+   AI Studio rate-limit table.
 2. ~~How the Gemini API counts image tokens for Gemma 4~~ **Resolved:** fixed
    258 per image or PDF page, not settable. See probe results above.
-2b. **Gemini 3.7 Flash free-tier limits** (AI Studio rate-limit chart) — decides
-   whether the scan tier is free or paid Batch.
+2b. ~~Gemini 3.7 Flash free-tier limits~~ **Resolved:** Tier 1 applies (1K RPM,
+   2M TPM, 10K RPD); scan tier is paid at ~$3 for the PTR corpus.
+2d. **Gemma latency vs `thinking_level`** — measure with thinking off.
 2c. **Tiled-crop trick** on hosted Gemma for scans, measured on the golden set.
-3. **Exact rate-limit values** from the AI Studio tooltip.
+3. ~~Exact rate-limit values~~ **Resolved:** see table in §2.
 4. **Free-tier data-use terms.** Prompts on the free tier may be used for
    product improvement. The inputs are public records, so this is tolerable,
    but confirm nothing in the terms conflicts with `DATA-TERMS.md`.
@@ -197,7 +206,7 @@ Before choosing routing thresholds or trusting any throughput figure:
 | Corpus | Docs | On the free tier |
 |---|---|---|
 | House PTRs, e-filed (~70%) | ~5,900 | under one day on Gemma at ~14K RPD |
-| House PTRs, scanned (~30%) | ~2,500 | Flash: free-tier limits TBD; paid Batch ≈ $1–2 total at 1,102 tokens/page |
+| House PTRs, scanned (~30%) | ~2,500 | Flash on Tier 1: ~3 hours at 1K RPM; ~$3 standard, ~$1.50 Batch |
 | House annual reports | unsized | multi-page; unknown |
 | Senate, 2012–present | unsized | scanned share unknown |
 
