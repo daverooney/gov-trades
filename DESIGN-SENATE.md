@@ -43,8 +43,8 @@ Seven logical components, mapped to concrete services:
 | Phase 1 compute    | GitHub-hosted `ubuntu-latest` runner             |
 | Raw file storage   | Cloudflare R2 bucket (S3-compatible, no egress)  |
 | Repo + artifacts   | This repository (code + compiled datasets)       |
-| Phase 2 OCR        | GitHub Models (vision model), CPU runner         |
-| Backfill compute   | Colab Pro notebook, self-hosted Gemma on GPU     |
+| Phase 2 extraction | Gemma 4 via Gemini API free tier (see `DESIGN-OCR.md`) |
+| Overflow compute   | Colab Pro runtime via Colab CLI, self-hosted Gemma |
 | Secrets            | GitHub Actions encrypted secrets                 |
 
 Data flow:
@@ -90,6 +90,8 @@ See §6 for the reasoning.
 ```
 /
 ├── DESIGN-SENATE.md           ← this file
+├── DESIGN-HOUSE.md            ← House delta from this design
+├── DESIGN-OCR.md              ← shared extraction tier
 ├── README.md                  ← what the dataset is, how to use it
 ├── .github/
 │   └── workflows/
@@ -101,7 +103,7 @@ See §6 for the reasoning.
 │   ├── collect.py             ← Phase 1: listing + download
 │   ├── storage.py             ← R2 adapter (put/get/exists via S3 API)
 │   ├── manifest.py            ← read/write/checkpoint the manifest
-│   ├── ocr.py                 ← Phase 2: GitHub Models vision OCR
+│   ├── extract/               ← Phase 2: backends per DESIGN-OCR.md
 │   └── compile.py             ← Phase 3: build CSV/SQLite/DuckDB
 ├── data/                      ← COMMITTED derived artifacts (text only)
 │   ├── manifest.csv           ← index of every filing + status
@@ -160,72 +162,35 @@ manifest or a small state file). The backfill is the exception, not the norm.
 
 ---
 
-## 5. Phase 2 — OCR
+## 5. Phase 2 — Extraction
 
-Replaces the notebook's self-hosted Gemma-on-L4 with a hosted vision model, so
-this phase runs on a **plain CPU runner** — no GPU needed. This removes the
-single biggest obstacle to running OCR inside GitHub Actions.
+The extraction tier is shared with the House pipeline and specified in
+**`DESIGN-OCR.md`**: Gemma 4 on the Gemini API free tier as the primary
+(31B for scanned, 26B A4B for e-filed), the other model as adjudicator,
+self-hosted Gemma on Colab via the Colab CLI as overflow, Vertex managed
+Gemma as paid fallback. Fixed output schema, per-backend prompts, a
+calibration set before any threshold is chosen.
 
-- **Backend:** GitHub Models, using a vision-capable model. Authenticates with
-  the auto-provisioned `GITHUB_TOKEN`, so there is **no third-party secret to
-  manage** for the free/prototyping quota.
+Senate-specific points only:
+
 - **Input:** the scanned subset from the manifest (`format == scanned` AND
-  `ocr_status != done`). Rasterize/resize page images as needed, send each page
-  image + the transcription prompt.
-- **Prompt:** transcribe verbatim; preserve tables as ` | `-separated rows;
-  capture every transaction line (date, owner, asset, ticker, type, amount
-  range) exactly; mark illegible regions. (Reuse the notebook's prompt.)
-- **Output:** per-filing JSON with `pages[]` and a joined `full_text`, plus a
-  flattened per-filing CSV of transaction rows where parseable.
-- **Resume:** skip filings already OCR'd; checkpoint the manifest per filing.
+  `extract_status != done`). Paper filings arrive as per-page GIFs from the
+  viewer; electronic filings are HTML and are parsed directly, not sent to a
+  model. Rare direct PDFs are rasterised with `pdftoppm`.
+- **Document class:** every scanned Senate filing routes as `scanned`, so the
+  31B is the Senate's first-pass model. Expect Senate to lean harder on the
+  31B pool than the House does.
+- **Multi-page annual reports** may exceed the per-request token budget at a
+  1120 visual budget. Fall back to per-page requests with page-stitching in
+  the result; see DESIGN-OCR §7.
+- **Resume:** skip filings already extracted; checkpoint the manifest per
+  filing. Unchanged.
 
-### Cost / rate notes (verify against live pricing at build time)
-- GitHub Models free quota is aimed at prototyping — fine for a **quarterly
-  incremental** run (a few hundred new scanned pages), throttled for a big
-  backfill.
-- **Backfill runs on Colab Pro, not Actions** (see below). The Gemini Batch
-  API remains a fallback if Colab compute units run short (Batch is 50% off
-  and async with a ~24h SLA). Keep the OCR backend behind a small interface
-  so swapping is a config change.
-- Rough sizing: ~3k token-units per page all-in; a big multi-page annual filing
-  is well under a cent at Gemma-tier rates. Volume, not price, is the constraint.
-
-### Backfill on Colab Pro (self-hosted Gemma)
-
-The historical bootstrap is a one-time, GPU-heavy job that does not fit the
-Actions free tier or the GitHub Models quota. It runs instead as a Colab
-notebook on the existing Colab Pro subscription (already paid; no marginal
-cost until compute units run out). This is a return to the notebook's original
-Gemma-on-L4 approach, kept only for the backfill.
-
-Why this is the right split:
-- **Full control of the serving recipe.** The House pilot (see
-  `prior_art/paper/ETL_PRIOR_ART.md`) showed local vision models fail from
-  perception starvation unless the image-token budget is raised to ~1120 per
-  page. A self-hosted `llama-server` / vLLM on Colab exposes that knob; a
-  hosted API may not. This resolves open question 7 for the backfill path.
-- **Proven serving recipe already exists.** Gemma 4 12B nothink at
-  `--image-min/max-tokens 1120` was the House workhorse at ~43s/doc; the
-  31B is verifier-grade. Reuse it rather than re-tuning against a hosted model.
-- **Same contract, different host.** The notebook writes raw files to R2 and
-  checkpoints the same manifest that Actions reads. Nothing downstream knows
-  or cares which host did the work. Phase 3 compile runs unchanged.
-
-Constraints the notebook must design around:
-- **Sessions are ephemeral and time-capped** (roughly 24h max on Pro, with
-  idle disconnects). The per-filing manifest checkpoint is therefore mandatory,
-  and the notebook must be safe to re-run from the top with zero-cost skips.
-- **Compute units are the real budget.** Colab Pro gives a monthly unit
-  allotment; an L4 burns units per hour. The House projection was ~5 GPU-days
-  for the full jammed corpus and ~12h for the 2022–2026 tail. Verify unit burn
-  rates at build time; a full multi-chamber backfill will likely span several
-  months of allotment or need a one-time unit top-up. Shard by year and run the
-  recent tail first.
-- **Secrets:** R2 credentials go in Colab's secrets panel (`userdata`), never in
-  the notebook cells.
-- **Steady state stays on Actions.** Once the backfill is done, quarterly
-  incremental runs use GitHub Models (or Colab again, run by hand, if GitHub
-  Models cannot read scanned pages at adequate resolution).
+### History
+The original plan (GitHub Models on a CPU runner, GITHUB_TOKEN auth) died when
+GitHub retired GitHub Models on 2026-07-30. The Colab notebook's Gemma-on-L4
+approach survives as the overflow path, now driven headlessly by the Colab CLI
+rather than by hand.
 
 ---
 
@@ -338,10 +303,11 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 | `R2_SECRET_ACCESS_KEY`     | Phase 1/3 | R2 API token                           |
 | `R2_ACCOUNT_ENDPOINT`      | Phase 1/3 | R2 S3 endpoint URL (can be a variable) |
 | `R2_BUCKET`                | Phase 1/3 | bucket name (can be a variable)        |
-| `GITHUB_TOKEN`             | Phase 2   | auto-provisioned; no setup needed      |
-| `GEMINI_API_KEY`           | Phase 2*  | only if using the Batch backfill path  |
+| `GEMINI_API_KEY`           | Phase 2   | AI Studio key; free tier, Gemma 4      |
+| `COLAB_BASE_URL`           | Phase 2*  | overflow only; set per Colab session   |
 
-`*` optional — only needed if the OCR backend is switched to Gemini for backfill.
+`*` optional — the Colab overflow path is driven from a laptop, not Actions,
+so this is normally a local env var rather than a repo secret.
 
 - Secrets are encrypted at rest, masked in logs, and withheld from fork PRs
   (important: this is a **public** repo).
@@ -353,12 +319,12 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 ## 9. Open questions / decisions to make during implementation
 
 1. **Backfill strategy.** One big sharded bootstrap vs. letting incremental runs
-   slowly catch up. Affects whether the Batch OCR path is needed at all.
+   slowly catch up. Affects whether the Colab overflow path is needed at all.
 2. **Manifest format at scale.** CSV is simple but a growing manifest may be
    better as SQLite (also lets Phase 3 query it directly). Decide early.
-3. **Transaction parsing depth.** How much structure to extract from OCR text
-   (full transaction rows vs. raw text only). Start with raw text + best-effort
-   rows; tighten later.
+3. **Transaction parsing depth.** Settled by `DESIGN-OCR.md` §5: direct-to-JSON
+   transaction rows are the product; verbatim transcription is an optional
+   second prompt, not a prerequisite.
 4. **R2 key scheme.** Lock the object-key convention before the first real run;
    changing it later means re-keying the whole corpus.
 5. **Idempotency of re-OCR.** Deleting a filing's outputs + clearing its status
@@ -366,13 +332,9 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 6. **Politeness under Actions.** Confirm the delay/backoff still reads as polite
    from a runner and that the edge stays clear across a full run (the probe only
    tested the handshake + one page).
-7. **OCR image-token budget.** The House pilot (see `prior_art/paper/ETL_PRIOR_ART.md`)
-   found every local vision-model failure was perception starvation at the
-   default ~130-token page read; accuracy only held at ~1120 image tokens per
-   page. GitHub Models may not expose that knob. Verify a hosted model reads
-   scanned pages at adequate resolution before committing to it; otherwise the
-   backfill's Colab/Gemma path also covers incremental runs, at the cost of
-   unattended operation (someone has to open the notebook each quarter).
+7. **Extraction tier unknowns** are tracked in `DESIGN-OCR.md` §7: separate vs
+   shared rate-limit pools, how Gemma 4 image tokens are counted on the API,
+   exact limit values, free-tier data-use terms, multi-page requests.
 8. **Data terms.** Derived artifacts must ship with `DATA-TERMS.md` (statutory
    use restriction). Release assets should include it alongside the datasets.
 
@@ -385,12 +347,12 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 3. `manifest.py` (schema, read/write, checkpoint).
 4. `collect.py` (listing + download → R2 + manifest); run a tiny date-bounded
    slice end to end.
-5. `ocr.py` (GitHub Models vision, behind a swappable interface); OCR one filing.
+5. `extract/gemini.py` behind the `Extractor` protocol; run the calibration set
+   (DESIGN-OCR §6) before wiring routing.
 6. `compile.py` (build CSV/SQLite/DuckDB from per-filing data).
 7. `pipeline.yml` wiring the three jobs; test via `workflow_dispatch` on a
    narrow date range before enabling the schedule.
-8. Backfill notebook on Colab Pro: import `session.py` / `collect.py` /
-   `storage.py` / `manifest.py` from this repo (pip install from git), serve
-   Gemma locally with the House serving recipe, shard by year, run the recent
-   tail first, watch compute units.
+8. Backfill: shard by year, run on the Gemini free tier from a laptop or a
+   long-running Actions job, watch 429s. Only if it presses the limits, stand
+   up `extract/colab.py` against a Colab CLI runtime as overflow.
 ```
