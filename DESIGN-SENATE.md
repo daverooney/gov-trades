@@ -35,7 +35,7 @@ GitHub-orchestrated approach is viable.
 
 ## 2. Architecture overview
 
-Six logical components, mapped to concrete services:
+Seven logical components, mapped to concrete services:
 
 | Concern            | Implementation                                   |
 |--------------------|--------------------------------------------------|
@@ -44,6 +44,7 @@ Six logical components, mapped to concrete services:
 | Raw file storage   | Cloudflare R2 bucket (S3-compatible, no egress)  |
 | Repo + artifacts   | This repository (code + compiled datasets)       |
 | Phase 2 OCR        | GitHub Models (vision model), CPU runner         |
+| Backfill compute   | Colab Pro notebook, self-hosted Gemma on GPU     |
 | Secrets            | GitHub Actions encrypted secrets                 |
 
 Data flow:
@@ -182,12 +183,49 @@ single biggest obstacle to running OCR inside GitHub Actions.
 - GitHub Models free quota is aimed at prototyping — fine for a **quarterly
   incremental** run (a few hundred new scanned pages), throttled for a big
   backfill.
-- **Backfill escape hatch:** if the historical bootstrap is too big for the
-  free quota, run it once against the **Gemini Batch API** (Gemma-tier models
-  are the cheapest Google offers; Batch is 50% off and async with a ~24h SLA).
-  Keep the OCR backend behind a small interface so swapping is a config change.
+- **Backfill runs on Colab Pro, not Actions** (see below). The Gemini Batch
+  API remains a fallback if Colab compute units run short (Batch is 50% off
+  and async with a ~24h SLA). Keep the OCR backend behind a small interface
+  so swapping is a config change.
 - Rough sizing: ~3k token-units per page all-in; a big multi-page annual filing
   is well under a cent at Gemma-tier rates. Volume, not price, is the constraint.
+
+### Backfill on Colab Pro (self-hosted Gemma)
+
+The historical bootstrap is a one-time, GPU-heavy job that does not fit the
+Actions free tier or the GitHub Models quota. It runs instead as a Colab
+notebook on the existing Colab Pro subscription (already paid; no marginal
+cost until compute units run out). This is a return to the notebook's original
+Gemma-on-L4 approach, kept only for the backfill.
+
+Why this is the right split:
+- **Full control of the serving recipe.** The House pilot (see
+  `prior_art/paper/ETL_PRIOR_ART.md`) showed local vision models fail from
+  perception starvation unless the image-token budget is raised to ~1120 per
+  page. A self-hosted `llama-server` / vLLM on Colab exposes that knob; a
+  hosted API may not. This resolves open question 7 for the backfill path.
+- **Proven serving recipe already exists.** Gemma 4 12B nothink at
+  `--image-min/max-tokens 1120` was the House workhorse at ~43s/doc; the
+  31B is verifier-grade. Reuse it rather than re-tuning against a hosted model.
+- **Same contract, different host.** The notebook writes raw files to R2 and
+  checkpoints the same manifest that Actions reads. Nothing downstream knows
+  or cares which host did the work. Phase 3 compile runs unchanged.
+
+Constraints the notebook must design around:
+- **Sessions are ephemeral and time-capped** (roughly 24h max on Pro, with
+  idle disconnects). The per-filing manifest checkpoint is therefore mandatory,
+  and the notebook must be safe to re-run from the top with zero-cost skips.
+- **Compute units are the real budget.** Colab Pro gives a monthly unit
+  allotment; an L4 burns units per hour. The House projection was ~5 GPU-days
+  for the full jammed corpus and ~12h for the 2022–2026 tail. Verify unit burn
+  rates at build time; a full multi-chamber backfill will likely span several
+  months of allotment or need a one-time unit top-up. Shard by year and run the
+  recent tail first.
+- **Secrets:** R2 credentials go in Colab's secrets panel (`userdata`), never in
+  the notebook cells.
+- **Steady state stays on Actions.** Once the backfill is done, quarterly
+  incremental runs use GitHub Models (or Colab again, run by hand, if GitHub
+  Models cannot read scanned pages at adequate resolution).
 
 ---
 
@@ -333,7 +371,8 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
    default ~130-token page read; accuracy only held at ~1120 image tokens per
    page. GitHub Models may not expose that knob. Verify a hosted model reads
    scanned pages at adequate resolution before committing to it; otherwise the
-   Gemini Batch escape hatch (or a self-hosted Gemma run) becomes the main path.
+   backfill's Colab/Gemma path also covers incremental runs, at the cost of
+   unattended operation (someone has to open the notebook each quarter).
 8. **Data terms.** Derived artifacts must ship with `DATA-TERMS.md` (statutory
    use restriction). Release assets should include it alongside the datasets.
 
@@ -350,5 +389,8 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 6. `compile.py` (build CSV/SQLite/DuckDB from per-filing data).
 7. `pipeline.yml` wiring the three jobs; test via `workflow_dispatch` on a
    narrow date range before enabling the schedule.
-8. Backfill: shard by year, run manually, watch the 6h cap and OCR quota.
+8. Backfill notebook on Colab Pro: import `session.py` / `collect.py` /
+   `storage.py` / `manifest.py` from this repo (pip install from git), serve
+   Gemma locally with the House serving recipe, shard by year, run the recent
+   tail first, watch compute units.
 ```
