@@ -37,4 +37,30 @@ from it.
   credit or fundraising lists.
 - If you redistribute the data, carry this notice with it.
 
+## Both chambers
+
+The statute above is Title I of the Ethics in Government Act, which covers
+every filer under that title, so it applies equally to House and Senate
+reports. The two sites differ only in presentation: the Senate search site
+requires an acknowledgement before every session, while the House Clerk's
+disclosure site (checked 2026-09-19) shows no acknowledgement and no usage
+terms of its own. Its "Terms of Service" link points to a table of members'
+terms of service in Congress, not to usage terms. The statutory restriction
+applies to House reports regardless.
+
+## Processing by third-party model providers
+
+Scanned pages and PDFs are sent to hosted vision models to extract
+transaction rows. As of 2026-09-19 the extraction backends are Google's
+Gemini API (Gemma 4 and Gemini Flash models). The Gemini API Terms of
+Service (effective 2026-03-23) say that for **unpaid** services Google may use
+submitted content and responses to improve its products and that human
+reviewers may read them, while for **paid** services it does not. Whether the
+free Gemma quota inside a billing-enabled project counts as paid is not
+stated. This project treats Gemma calls as unpaid for that purpose. The
+inputs are public records and the outputs are published here, so the
+additional exposure is small, but it is disclosed. Sending reports to a
+model for transcription is not a commercial, credit, or solicitation use
+under the statute.
+
 This file is a good-faith summary, not legal advice.

@@ -130,15 +130,15 @@ with the golden set and the first sharded run.
 
 1. **Filing-type legend.** `A`/`C`/`T`/`D`/`W`/`X` meanings are guessed; find
    the Clerk's legend before downloading anything but `P`.
-2. **Clerk Terms of Service.** `clerk.house.gov/member_info/Terms_of_Service.pdf`
-   has not been read. Confirm automated download is permitted and add any
-   restriction to `DATA-TERMS.md`.
+2. ~~Clerk Terms of Service~~ **Resolved 2026-09-19:** that PDF is a table of
+   members' terms of service in Congress, not usage terms. The Clerk's
+   disclosure site carries no usage terms or acknowledgement; only the
+   statute applies. Recorded in `DATA-TERMS.md`.
 3. **Annual report volume and page counts.** Needed before scoping phase 2.
 4. **Prefix classification accuracy.** Validate prefix → scanned/e-filed
    against `pdffonts` on a sample before relying on it for routing.
-5. **Statute coverage.** `DATA-TERMS.md` quotes the statute as applied to
-   Senate reports; the same Title I applies to House reports. Confirm and
-   say so explicitly there.
+5. ~~Statute coverage~~ **Resolved:** `DATA-TERMS.md` now states that Title I
+   covers both chambers.
 6. **Amendment detection.** Not investigated. Find out whether the FD index
    carries an amendment flag or type, whether the PDF is marked, and whether
    a reliable link to the original filing can be derived.

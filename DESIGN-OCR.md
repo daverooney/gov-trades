@@ -295,9 +295,11 @@ Before choosing routing thresholds or trusting any throughput figure:
    under schema mode. Set it explicitly.
 2c. **Tiled-crop trick** on hosted Gemma for scans, measured on the golden set.
 3. ~~Exact rate-limit values~~ **Resolved:** see table in §2.
-4. **Free-tier data-use terms.** Prompts on the free tier may be used for
-   product improvement. The inputs are public records, so this is tolerable,
-   but confirm nothing in the terms conflicts with `DATA-TERMS.md`.
+4. ~~Free-tier data-use terms~~ **Resolved 2026-09-19:** Gemini API terms
+   allow product-improvement use and human review of unpaid-service content;
+   paid services are exempt. Whether free Gemma quota in a billing-enabled
+   project is "paid" is unstated; treated as unpaid and disclosed in
+   `DATA-TERMS.md`. No conflict with the statute.
 5. **Multi-page documents in one request** stay under the per-request and
    per-minute token caps; long annual reports may need per-page requests.
 6. **Colab CLI auth and Pro entitlement** from a laptop, and L4 unit burn.
