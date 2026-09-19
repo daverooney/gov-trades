@@ -14,6 +14,17 @@ The data presented here was sourced from these official sources:
 
 Other sources may be added in the future.
 
-While this data is public, it is subject to some [limitations on usage](https://efdsearch.senate.gov/search/home/), and as far as I can tell, those still apply. The code in this repo is mine, and is under [MIT License](LICENSE.md). 
+## Layout
 
-Full disclosure: Claude Code was used in the creation of much of this tooling.
+- `scripts/probe_efd.py` - go/no-go probe: can this host clear the Senate eFD edge? Run with `uv run scripts/probe_efd.py`.
+- `.github/workflows/probe.yml` - runs the probe weekly from a GitHub-hosted runner.
+- `DESIGN-SENATE.md` - pipeline design for the Senate side (the base design).
+- `DESIGN-HOUSE.md` - House pipeline as a delta from the Senate design.
+- `DESIGN-OCR.md` - the shared extraction tier: Gemma 4 on the Gemini API, Colab overflow, routing and calibration.
+- `prior_art/` - reference material carried over from the earlier House work. Not on the import path.
+
+## License and data terms
+
+The **code** in this repo is mine and is under the [MIT License](LICENSE).
+
+The **data** is not covered by that license. It is public-record material published by the House and Senate, and its use is restricted by federal statute regardless of how it reaches you. See [DATA-TERMS.md](DATA-TERMS.md) for the restriction text. In short: no commercial use (other than news media dissemination), no credit-rating use, and no use in soliciting money.

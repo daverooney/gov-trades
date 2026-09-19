@@ -16,16 +16,12 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install the one dependency
-        run: pip install "curl_cffi>=0.7"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Run the edge probe
-        run: python ./scripts/probe_efd.py
+        # deps come from the script's PEP 723 block
+        run: uv run scripts/probe_efd.py
         # If probe_efd.py exits non-zero the step fails and the run goes red,
         # so the Actions tab becomes a pass/fail dashboard for "can we scrape
         # from here". No secrets needed -- this probe touches only public URLs.

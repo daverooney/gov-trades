@@ -34,7 +34,7 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1",
     "Connection": "keep-alive",
     # identify yourself politely; harmless if the site ignores it
-    "From": "your-contact@example.com",
+    "From": "d@verooney.com",
 }
 
 
