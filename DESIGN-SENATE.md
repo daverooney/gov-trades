@@ -146,8 +146,10 @@ Ported from the existing Colab notebook, which already works and is now
 committed at `prior_art/colab/senate_disclosures_pipeline_v14.ipynb` (see
 `prior_art/README.md` for the cell map and the one bug not to port: the
 report-id regex must match uppercase UUIDs). Its 2026-07-19 run sized the
-corpus at 4,250 senator reports since 2012, 24% paper-filed; the raw corpus
-from that run is on Google Drive and can seed R2. Key pieces:
+corpus at 4,250 senator reports since 2012, 24% paper-filed. The raw corpus
+from that run stays on Google Drive and is **not** reused: every byte in R2
+is collected by this repo's code, so provenance is one story (decision
+2026-09-20; the corpus is ~2 GB and re-crawling it is cheap). Key pieces:
 
 - **Session + handshake** (`session.py`): `curl_cffi` session with
   `impersonate="chrome"` clears the Akamai edge; GET `/search/home/` for the
