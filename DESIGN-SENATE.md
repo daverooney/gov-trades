@@ -335,8 +335,40 @@ Actions), referenced as `${{ secrets.NAME }}`, injected as env vars:
 `*` optional — the Colab overflow path is driven from a laptop, not Actions,
 so this is normally a local env var rather than a repo secret.
 
+### Three runtimes, one config path
+
+The library reads configuration from environment variables only (`config.py`)
+and never opens a file or a secrets API itself. Each runtime populates the
+environment its own way:
+
+| Runtime | Secret store | How it reaches the environment |
+|---|---|---|
+| Laptop | gitignored `.env` | `python-dotenv`, loaded by the thin scripts only |
+| GitHub Actions | encrypted repo secrets | `env:` block in the workflow, `${{ secrets.NAME }}` |
+| Colab Pro backfill | Colab secrets pane | `google.colab.userdata.get()` into `os.environ` at the top of the notebook; needs the R2 keys and `GEMINI_API_KEY` |
+
+A committed `.env.example` lists every variable name with no values and is
+the canonical reference for what the code expects.
+
+### Storage backends
+
+`storage.py` exposes put/get/exists over two backends selected by
+environment: a local-directory backend (the default when the R2 variables
+are unset) and R2 via `boto3`. Build and test the collector against the
+local backend first; create the bucket and API token when the R2 round-trip
+test (§10 step 2) is ready to run, not before.
+
+When the bucket is created: one bucket, since key prefixes already separate
+chamber and raw/parsed; one API token scoped to object read + write on that
+bucket only; public read (r2.dev subdomain or custom domain) is a later
+bucket setting for corpus downloads.
+
+### Hygiene
+
 - Secrets are encrypted at rest, masked in logs, and withheld from fork PRs
   (important: this is a **public** repo).
+- Enable GitHub secret scanning with push protection (free for public
+  repos) so a pushed key is blocked before it lands.
 - Prefer OIDC over long-lived keys where a provider supports it; R2 currently
   uses static API tokens, so those go in secrets.
 
