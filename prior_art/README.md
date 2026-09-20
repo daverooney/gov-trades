@@ -35,7 +35,10 @@ Still in the paper repo and not copied: 18 pilot `extract_*.json` outputs
 under `experiments/house_extraction/` (552 KB; the Sonnet ones are
 hand-verified-grade references) and the gitignored `data/house_pdfs/` corpus
 (114 e-filed 2026 PDFs, 9 gauntlet/jammed PDFs, 172 rendered pages, the
-21,122-row jam log). Those are the seed for the House golden set.
+21,122-row jam log). Useful for picking *which* DocIDs go in the House
+golden set and for comparing model outputs; the PDFs themselves are
+re-downloaded by this repo's collector, not copied (decision 2026-09-20: no
+prior-art data enters the dataset, only prior-art code and findings).
 
 ## `colab/`
 
