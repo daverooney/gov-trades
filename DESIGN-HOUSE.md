@@ -150,6 +150,10 @@ with the golden set and the first sharded run.
 1. **Filing-type legend.** `A`/`C`/`D`/`H`/`T`/`W`/`X` meanings are guessed
    (`H` and `T` appear twice each in 2026; both share the e-filed annual
    prefix); find the Clerk's legend before downloading anything but `P`.
+   Older years add more: 2015 has `O` (440 rows, both e-filed prefix `1`
+   and paper), `E` (5) and `G` (1), and 4-digit paper DocIDs there start
+   with `6`, not `8`. The 8-digit = e-filed rule held in 2015. About 2% of
+   rows in each year probed have a blank FilingDate, all type `W`.
 2. ~~Clerk Terms of Service~~ **Resolved 2026-09-19:** that PDF is a table of
    members' terms of service in Congress, not usage terms. The Clerk's
    disclosure site carries no usage terms or acknowledgement; only the

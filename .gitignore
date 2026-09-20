@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# gov-trades: raw documents live in object storage (or data/raw locally), never git
+data/raw/

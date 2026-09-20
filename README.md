@@ -22,6 +22,18 @@ Other sources may be added in the future.
 - `DESIGN-HOUSE.md` - House pipeline as a delta from the Senate design.
 - `DESIGN-OCR.md` - the shared extraction tier: Gemma 4 on the Gemini API, Colab overflow, routing and calibration.
 - `prior_art/` - reference material carried over from the earlier House work. Not on the import path.
+- `src/gov_trades/` - the library. `config.py` (env vars only), `storage.py` (local directory or R2), `filings.py` (the manifest CSV), and `house/` (Clerk session and yearly index).
+- `scripts/` - thin CLIs that print a JSON summary. `house_listing.py --year 2026` diffs one year's FD index against the manifest.
+- `tests/` - unit tests; no network.
+
+## Development
+
+```bash
+cp .env.example .env    # set CONTACT_EMAIL at minimum
+uv sync
+uv run python -m pytest
+uv run python scripts/house_listing.py --year 2026
+```
 
 ## License and data terms
 
