@@ -18,10 +18,10 @@ prior House work in `prior_art/paper/`. Nothing built yet in this repo.
   their parser silently drops every paper-filed PTR (29% of filings), the repo
   has no license and one maintainer, and the portfolio value is in "built from
   the Clerk's PDFs, warts and all".
-- **PTRs first (FilingType `P`).** Annual reports (`A`, and probably `C`/`T`)
-  are a later phase: multi-page, unsized, never touched by the prior work.
-  Extension notices (`X`), and types `D`/`W` are indexed but not downloaded
-  until their meaning is confirmed.
+- **PTRs first (FilingType `P`).** Annual reports (`A`, and probably
+  `C`/`H`/`T`) are a later phase: multi-page, unsized, never touched by the
+  prior work. Extension notices (`X`), and types `D`/`W` are indexed but not
+  downloaded until their meaning is confirmed.
 - **Uniform vision path for e-filed and scanned.** The prior work showed
   pdfplumber parsing of e-filed PTRs is fragile (small-caps fonts serialise
   with mangled case, checkbox widgets become glyph runs, whole rows collapse
@@ -39,12 +39,28 @@ prior House work in `prior_art/paper/`. Nothing built yet in this repo.
 | Access | Akamai edge; needs `curl_cffi` Chrome impersonation + CSRF handshake | open; plain `requests` with a contact User-Agent and a polite delay |
 | Incremental | date high-water mark | set difference of `DocID` against the manifest |
 | Documents | electronic HTML, or per-page GIFs from a viewer | one PDF per filing; ~70% native text, ~30% CCITT bilevel scans at 200 dpi |
-| Format detection | HTML vs GIF viewer | DocID prefix: `2xxxxxxx` e-filed, `8`/`9xxxxxxx` paper; confirm with `pdffonts` (zero fonts = scan) |
+| Format detection | HTML vs GIF viewer | DocID length + prefix (table below); confirm with `pdffonts` (zero fonts = scan) |
 | URL scheme | report id | `ptr-pdfs/<year>/<docid>.pdf` for `P`; `financial-pdfs/<year>/<docid>.pdf` for the rest |
 | Extraction prompt | transcription-first (now retired) | direct-to-JSON table extraction, validated on 114 docs |
 
 Index fields: Prefix, Last, First, Suffix, FilingType, StateDst, Year,
-FilingDate, DocID. No page counts, no format flag, no transaction data.
+FilingDate, DocID. No page counts, no format flag, no transaction data. The
+zip also carries `<year>FD.xml` (`<FinancialDisclosure><Member>...`), which is
+easier to parse than the CRLF TSV.
+
+DocID shape by filing type, from the 2026 index (1,302 rows, 2026-09-19):
+
+| DocID shape | FilingType | Rows | Class |
+|---|---|---|---|
+| 8-digit, `1xxxxxxx` | `A`/`C`/`H`/`T` | 627 | e-filed annual-type |
+| 8-digit, `2xxxxxxx` | `P` | 246 | e-filed PTR |
+| 8-digit, `3xxxxxxx` | `X` | 188 | e-filed extension |
+| 8-digit, `4xxxxxxx` | `D` | 38 | e-filed |
+| 7-digit, `8xxxxxx`/`9xxxxxx` | `P`/`C`/`D`/`X`/`W` | 184 | paper |
+| 4-digit, `8xxx` | `W` | 59 | paper |
+
+So "prefix 2 means e-filed" holds only for PTRs. Classify on length first
+(8 digits = e-filed, shorter = paper), then confirm with `pdffonts`.
 
 ---
 
@@ -95,7 +111,10 @@ Shared tier in `DESIGN-OCR.md`. House-only pieces, all lifted from
   sales and emitted checkbox amounts as letters). Under the routing rule they
   go to Gemini Flash first (1,102 tokens/page), with self-hosted Gemma 31B at
   1120 on Colab as adjudicator. The prior scan-path validation was n=1, so
-  the golden set must over-sample scans.
+  the golden set must over-sample scans. When a checkbox amount comes back
+  as a single letter, ingest maps it deterministically to the form's column
+  order (A = lowest bucket upward); that map was part of the pilot recipe and
+  belongs in `ingest.py`, not the prompt.
 
 ---
 
@@ -128,15 +147,18 @@ with the golden set and the first sharded run.
 
 ## 7. Open questions
 
-1. **Filing-type legend.** `A`/`C`/`T`/`D`/`W`/`X` meanings are guessed; find
-   the Clerk's legend before downloading anything but `P`.
+1. **Filing-type legend.** `A`/`C`/`D`/`H`/`T`/`W`/`X` meanings are guessed
+   (`H` and `T` appear twice each in 2026; both share the e-filed annual
+   prefix); find the Clerk's legend before downloading anything but `P`.
 2. ~~Clerk Terms of Service~~ **Resolved 2026-09-19:** that PDF is a table of
    members' terms of service in Congress, not usage terms. The Clerk's
    disclosure site carries no usage terms or acknowledgement; only the
    statute applies. Recorded in `DATA-TERMS.md`.
 3. **Annual report volume and page counts.** Needed before scoping phase 2.
-4. **Prefix classification accuracy.** Validate prefix → scanned/e-filed
-   against `pdffonts` on a sample before relying on it for routing.
+4. **Prefix classification accuracy.** The §2 table is from one year's
+   index; validate length/prefix → scanned/e-filed against `pdffonts` on a
+   sample, and check that older years follow the same scheme, before relying
+   on it for routing.
 5. ~~Statute coverage~~ **Resolved:** `DATA-TERMS.md` now states that Title I
    covers both chambers.
 6. **Amendment detection.** Not investigated. Find out whether the FD index

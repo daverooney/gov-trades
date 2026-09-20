@@ -19,9 +19,45 @@ moving here.
 - `test_house_ingest.py` - 27 tests encoding every edge case above. Port them
   along with whatever gets lifted.
 
-Still in the paper repo and not copied: the Gemma extraction harness
-(`gemma_extract.py`, `jam_backfill.py`), the pilot JSON output, and the
-serving-recipe findings.
+- `gemma_extract.py` - the llama-server client used for the pilot (copied
+  2026-09-19). Base64 PNG pages, `enable_thinking=False`, greedy by default,
+  fence-stripping JSON parser, usage/timings capture. Its `PROMPT` is the
+  validated House prompt, now also at `prompts/colab/house-ptr-v1.md`. Reads
+  `sys.argv` at import and hardcodes a `DOCS` dict; lift the client, not the
+  module.
+- `jam_backfill.py` - fetch, render (`pdftoppm -r 150`), extract, checkpoint
+  driver. `fetch()` is most of the House download step; the retry loop and the
+  per-doc `.raw.txt` checkpoint are the resume pattern. Its input is
+  TattooedHead's jam log, which the FD-index diff replaces.
+- `house_extraction_README.md` - the experiment folder's own README.
+
+Still in the paper repo and not copied: 18 pilot `extract_*.json` outputs
+under `experiments/house_extraction/` (552 KB; the Sonnet ones are
+hand-verified-grade references) and the gitignored `data/house_pdfs/` corpus
+(114 e-filed 2026 PDFs, 9 gauntlet/jammed PDFs, 172 rendered pages, the
+21,122-row jam log). Those are the seed for the House golden set.
+
+## `colab/`
+
+`senate_disclosures_pipeline_v14.ipynb` - the Senate eFD collect notebook
+(2026-07-19), previously untracked in `~/Downloads`. Committed with outputs
+because the run logs are the only sizing evidence for the Senate corpus
+(DESIGN-SENATE §5). The Google Drive folder id is redacted. Cells that matter:
+
+- cell 10: `_request` (5 retries, exponential backoff on 429/5xx, hard fail on
+  401/403) and `make_session` (curl_cffi Chrome + CSRF + gate POST).
+- cell 14: `_parse_row` (content-based), `_keep` (senator/candidate filter),
+  `_fmt_and_id`, `SKIP_KINDS`, `fetch_all_rows` (page size 100), `build_index`.
+- cell 16: manifest as local SQLite with CSV export at every checkpoint.
+- cell 18: `download_report` - electronic to HTML; paper to the viewer's GIF
+  pages in order, PDF fallback, `_viewer.html` fallback for inspection.
+- cell 22: `run_phase1` - done means files present and not `_viewer.html`.
+
+Do not port: the Google Drive sync (cells 4-6, top of 22), pandas, the
+HF-transformers Phase 2 (cells 26-30, superseded by DESIGN-OCR), and the
+`_fmt_and_id` UUID regex, which is lowercase-only while paper-filing hrefs
+carry uppercase UUIDs (571 of 1,029 paper ids fell back to
+`search_view_paper_<UUID>` strings). Match case-insensitively.
 
 ## `PROJECT_BRIEF.md`
 
