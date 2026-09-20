@@ -142,7 +142,12 @@ See §6 for the reasoning.
 
 ## 4. Phase 1 — Collect
 
-Ported from the existing Colab notebook, which already works. Key pieces:
+Ported from the existing Colab notebook, which already works and is now
+committed at `prior_art/colab/senate_disclosures_pipeline_v14.ipynb` (see
+`prior_art/README.md` for the cell map and the one bug not to port: the
+report-id regex must match uppercase UUIDs). Its 2026-07-19 run sized the
+corpus at 4,250 senator reports since 2012, 24% paper-filed; the raw corpus
+from that run is on Google Drive and can seed R2. Key pieces:
 
 - **Session + handshake** (`session.py`): `curl_cffi` session with
   `impersonate="chrome"` clears the Akamai edge; GET `/search/home/` for the

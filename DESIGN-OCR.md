@@ -120,6 +120,12 @@ result  ->  validate(schema) and sanity(row count vs header, dates plausible)
 ```
 
 Tolerance and "agree" are defined on the golden set (§6), not guessed.
+
+A cheaper escalation signal worth measuring on the golden set: re-read the
+document with sampling on (three reads) and treat any flicker between reads
+as "fail". The pilot saw stable greedy output flicker under sampling exactly
+on the fields that were wrong (n=1 doc, directional only). If it holds, it
+replaces the second-model call for most documents.
 Every accepted row records which model and prompt version produced it, so the
 dataset is auditable and re-runnable per backend.
 
@@ -313,7 +319,7 @@ Before choosing routing thresholds or trusting any throughput figure:
 | House PTRs, e-filed (~70%) | ~5,900 | under one day on Gemma at ~14K RPD |
 | House PTRs, scanned (~30%) | ~2,500 | Flash on Tier 1: ~3 hours at 1K RPM; ~$3 standard, ~$1.50 Batch |
 | House annual reports | unsized | multi-page; unknown |
-| Senate, 2012–present | unsized | scanned share unknown |
+| Senate, 2012–2026 | 4,250 (1,787 PTR e-filed, 1,434 annual e-filed, 1,029 paper) | 24% scanned; from the Colab v14 manifest, 2026-07-19 |
 
 All prior timing estimates (42 s/doc median on a single 8 GB consumer GPU
 through a flapping tunnel) are obsolete. Re-measure on the API and on an L4.
